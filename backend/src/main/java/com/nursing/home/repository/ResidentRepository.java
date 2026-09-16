@@ -11,7 +11,7 @@ public interface ResidentRepository extends JpaRepository<Resident, Long> {
 
     List<Resident> findAllByOrderByUpdatedAtDesc();
 
-    long countByRoomIdAndStatus(Long roomId, String status);
+    long countByRoomIdAndStatusIn(Long roomId, Collection<String> statuses);
 
     List<Resident> findByBedIdAndStatusIn(Long bedId, Collection<String> statuses);
 }

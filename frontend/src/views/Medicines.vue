@@ -59,6 +59,7 @@
           </el-select>
           <el-select v-model="iq.kind" placeholder="按类型" clearable size="small" style="width:120px">
             <el-option label="发放" value="发放" />
+            <el-option label="外带" value="外带" />
             <el-option label="退回" value="退回" />
           </el-select>
           <el-date-picker v-model="iq.date" type="date" value-format="YYYY-MM-DD" placeholder="按日期" clearable size="small" style="width:150px" />
@@ -77,9 +78,14 @@
         <el-table-column label="数量" width="110">
           <template #default="{ row }">{{ row.qty }} {{ medicineUnit(row.medicineId) }}</template>
         </el-table-column>
-        <el-table-column prop="kind" label="类型" width="90">
+        <el-table-column label="类型/护送单" width="160">
           <template #default="{ row }">
-            <el-tag :type="row.kind === '发放' ? 'warning' : 'info'">{{ row.kind }}</el-tag>
+            <el-tag :type="row.kind === '发放' ? 'warning' : row.kind === '外带' ? 'primary' : 'info'">
+              {{ row.kind }}
+            </el-tag>
+            <div v-if="row.kind === '外带'" style="font-size:12px;color:#909399">
+              {{ escortNo(row.escortId) }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="doseTime" label="剂次" width="80" />
@@ -125,7 +131,7 @@
         <el-form-item label="老人">
           <el-select v-model="issueForm.residentId" style="width:100%">
             <el-option
-              v-for="r in residents"
+              v-for="r in issueResidents"
               :key="r.id"
               :label="`${r.name}（${r.code} · ${r.status}）`"
               :value="r.id"
@@ -164,13 +170,14 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { medicineApi, medicineIssueApi, residentApi } from '../api'
+import { medicalEscortApi, medicineApi, medicineIssueApi, residentApi } from '../api'
 
 const medicines = ref([])
 const issues = ref([])
 const residents = ref([])
+const escorts = ref([])
 const loading = ref(false)
 const mq = reactive({ kind: '', status: '', keyword: '' })
 const iq = reactive({ residentId: null, kind: '', date: '' })
@@ -183,10 +190,16 @@ const issueVisible = ref(false)
 const issueForm = reactive({
   residentId: null, medicineId: null, qty: 1, kind: '发放', doseTime: '早', issueDate: '', operator: ''
 })
+const issueResidents = computed(() =>
+  issueForm.kind === '发放'
+    ? residents.value.filter((r) => r.status === '在住')
+    : residents.value.filter((r) => r.status !== '已退住')
+)
 
 const residentName = (id) => residents.value.find((r) => r.id === id)?.name || `#${id}`
 const medicineName = (id) => medicines.value.find((m) => m.id === id)?.name || `#${id}`
 const medicineUnit = (id) => medicines.value.find((m) => m.id === id)?.unit || ''
+const escortNo = (id) => escorts.value.find((e) => e.id === id)?.escortNo || (id ? `#${id}` : '')
 
 const loadMedicines = async () => {
   loading.value = true
@@ -282,14 +295,16 @@ const submitIssue = async () => {
 
 onMounted(async () => {
   try {
-    const [m, r, i] = await Promise.all([
+    const [m, r, i, e] = await Promise.all([
       medicineApi.list({}),
       residentApi.list({}),
-      medicineIssueApi.list({})
+      medicineIssueApi.list({}),
+      medicalEscortApi.list({})
     ])
     medicines.value = m
     residents.value = r
     issues.value = i
+    escorts.value = e
   } catch (e) {
     ElMessage.error(e.message)
   }

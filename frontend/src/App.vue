@@ -6,6 +6,7 @@
         <el-menu-item index="/rooms">房间与床位</el-menu-item>
         <el-menu-item index="/residents">老人档案</el-menu-item>
         <el-menu-item index="/shifts">护理班次</el-menu-item>
+        <el-menu-item index="/medical-escorts">外出就医</el-menu-item>
         <el-menu-item index="/medicines">药品与发放</el-menu-item>
       </el-menu>
     </el-header>

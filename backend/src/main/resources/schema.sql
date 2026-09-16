@@ -78,11 +78,43 @@ CREATE TABLE IF NOT EXISTS medicine_issue (
   medicine_id BIGINT NOT NULL,
   qty INT NOT NULL,
   kind VARCHAR(16) NOT NULL DEFAULT '发放',
+  escort_id BIGINT NULL,
   dose_time VARCHAR(8) NOT NULL DEFAULT '早',
   issue_date DATE NOT NULL,
   operator VARCHAR(32) NULL,
   created_at DATETIME NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  KEY idx_medicine_issue_escort (escort_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 兼容已初始化过的库：Hibernate 也会补列，这里保留一份显式兜底。
+SET @ddl = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'medicine_issue' AND COLUMN_NAME = 'escort_id') = 0,
+  'ALTER TABLE medicine_issue ADD COLUMN escort_id BIGINT NULL AFTER kind',
+  'SELECT 1'));
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS medical_escort (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  escort_no VARCHAR(32) NOT NULL,
+  resident_id BIGINT NOT NULL,
+  hospital_name VARCHAR(128) NOT NULL,
+  expected_leave_at DATETIME NOT NULL,
+  expected_return_at DATETIME NOT NULL,
+  escort_name VARCHAR(32) NOT NULL,
+  escort_type VARCHAR(16) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT '护送中',
+  closed_at DATETIME NULL,
+  close_action VARCHAR(32) NULL,
+  confirmer VARCHAR(32) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_medical_escort_no (escort_no),
+  KEY idx_medical_escort_resident_status (resident_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============ 种子数据 ============
@@ -100,7 +132,7 @@ INSERT IGNORE INTO bed (id, code, room_id, position, status) VALUES
   (3, 'BD-1021', 2, '靠窗', '空闲'),
   (4, 'BD-1022', 2, '靠门', '空闲'),
   (5, 'BD-1031', 3, '靠窗', '占用'),
-  (6, 'BD-2011', 4, '靠窗', '空闲'),
+  (6, 'BD-2011', 4, '靠窗', '占用'),
   (7, 'BD-2012', 4, '靠门', '停用'),
   (8, 'BD-3011', 5, '靠窗', '空闲');
 
@@ -109,16 +141,16 @@ INSERT IGNORE INTO resident (id, code, name, gender, age, care_level, room_id, b
   (2, 'LA-0002', '李长海', '男', 79, '自理',     1, 2,    DATE_SUB(CURDATE(), INTERVAL 150 DAY), NULL, '13800000002', '在住',     NOW(), NOW()),
   (3, 'LA-0003', '王秀英', '女', 88, '不能自理', 3, 5,    DATE_SUB(CURDATE(), INTERVAL 320 DAY), NULL, '13800000003', '在住',     NOW(), NOW()),
   (4, 'LA-0004', '陈建国', '男', 75, '自理',     2, NULL, DATE_SUB(CURDATE(), INTERVAL 400 DAY), DATE_SUB(CURDATE(), INTERVAL 30 DAY), '13800000004', '已退住', NOW(), NOW()),
-  (5, 'LA-0005', '赵秀兰', '女', 84, '半自理',   4, NULL, DATE_SUB(CURDATE(), INTERVAL 90 DAY),  NULL, '13800000005', '请假外出', NOW(), NOW()),
+  (5, 'LA-0005', '赵秀兰', '女', 84, '半自理',   4, 6,    DATE_SUB(CURDATE(), INTERVAL 90 DAY),  NULL, '13800000005', '在住', NOW(), NOW()),
   (6, 'LA-0006', '孙德明', '男', 81, '自理',     2, NULL, DATE_SUB(CURDATE(), INTERVAL 260 DAY), DATE_SUB(CURDATE(), INTERVAL 60 DAY), '13800000006', '已退住', NOW(), NOW());
 
 INSERT IGNORE INTO care_shift (id, shift_no, room_id, shift_date, period, nurse, start_min, end_min, handover_note, status, created_at, updated_at) VALUES
-  (1, 'HS-0001', 1, CURDATE(), '早班', '王护士', 420, 540, NULL, '值班中', NOW(), NOW()),
+  (1, 'HS-0001', 1, CURDATE(), '早班', '王护士', 0, 1440, NULL, '值班中', NOW(), NOW()),
   (2, 'HS-0002', 2, CURDATE(), '早班', '李护士', 420, 540, NULL, '待接班', NOW(), NOW()),
   (3, 'HS-0003', 1, CURDATE(), '中班', '张护士', 780, 900, NULL, '待接班', NOW(), NOW()),
   (4, 'HS-0004', 3, DATE_SUB(CURDATE(), INTERVAL 1 DAY), '早班', '王护士', 300, 420, '夜间咳得厉害，已提醒家属', '已交班', NOW(), NOW()),
   (5, 'HS-0005', 5, CURDATE(), '早班', '赵护士', 420, 540, NULL, '已取消', NOW(), NOW()),
-  (6, 'HS-0006', 4, CURDATE(), '早班', '钱护士', 600, 720, NULL, '待接班', NOW(), NOW());
+  (6, 'HS-0006', 4, CURDATE(), '早班', '钱护士', 0, 1439, NULL, '待接班', NOW(), NOW());
 
 INSERT IGNORE INTO medicine (id, code, name, unit, kind, stock, warn_stock, status) VALUES
   (1, 'MD-1001', '阿司匹林肠溶片', '片', '非处方', 60, 20, '在用'),

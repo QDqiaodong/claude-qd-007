@@ -22,9 +22,12 @@ public class MedicineIssue {
     @Column(nullable = false)
     public Integer qty;
 
-    /** 发放 / 退回 */
+    /** 发放 / 退回 / 外带 */
     @Column(nullable = false, length = 16)
     public String kind;
+
+    @Column(name = "escort_id")
+    public Long escortId;
 
     /** 早 / 中 / 晚 */
     @Column(nullable = false, length = 8)

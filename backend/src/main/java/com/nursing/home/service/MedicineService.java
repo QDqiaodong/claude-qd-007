@@ -1,6 +1,8 @@
 package com.nursing.home.service;
 
 import com.nursing.home.dto.BizException;
+import com.nursing.home.dto.TakeoutMedicineRequest;
+import com.nursing.home.entity.MedicalEscort;
 import com.nursing.home.entity.Medicine;
 import com.nursing.home.entity.MedicineIssue;
 import com.nursing.home.entity.Resident;
@@ -9,7 +11,12 @@ import com.nursing.home.repository.MedicineRepository;
 import com.nursing.home.repository.ResidentRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,12 +28,14 @@ public class MedicineService {
     private final MedicineRepository medicines;
     private final MedicineIssueRepository issues;
     private final ResidentRepository residents;
+    private final MedicalEscortService escorts;
 
     public MedicineService(MedicineRepository medicines, MedicineIssueRepository issues,
-                           ResidentRepository residents) {
+                           ResidentRepository residents, MedicalEscortService escorts) {
         this.medicines = medicines;
         this.issues = issues;
         this.residents = residents;
+        this.escorts = escorts;
     }
 
     public List<Medicine> listMedicines(String status, String kind, String keyword) {
@@ -119,8 +128,11 @@ public class MedicineService {
             throw new BizException("剂次只能是早、中、晚");
         }
         String kind = (input.kind == null || input.kind.isBlank()) ? "发放" : input.kind.trim();
-        if (!"发放".equals(kind) && !"退回".equals(kind)) {
-            throw new BizException("只支持发放和退回两种");
+        if (!"发放".equals(kind) && !"退回".equals(kind) && !"外带".equals(kind)) {
+            throw new BizException("只支持发放、退回和外带三种");
+        }
+        if ("外带".equals(kind)) {
+            throw new BizException("外带药品必须在外出就医护送单上勾选，请走外带发药");
         }
         LocalDate date = input.issueDate == null ? LocalDate.now() : input.issueDate;
 
@@ -132,6 +144,11 @@ public class MedicineService {
         if ("发放".equals(kind)) {
             if ("已退住".equals(r.status)) {
                 throw new BizException("老人 " + r.name + " 已经退住，不能再发药了");
+            }
+            MedicalEscort activeEscort = escorts.findActiveForMedicine(r.id);
+            if (activeEscort != null) {
+                throw new BizException("老人 " + r.name + " 的护送单 " + activeEscort.escortNo
+                        + " 还没销，发药台不能做在房早中晚常规发放，外出用药只能勾成外带");
             }
             if (!"在用".equals(m.status)) {
                 throw new BizException("药品 " + m.name + " 已经停用，不能发放");
@@ -164,7 +181,103 @@ public class MedicineService {
         saved.doseTime = dose;
         saved.issueDate = date;
         saved.operator = input.operator;
+        saved.escortId = null;
         saved.createdAt = LocalDateTime.now();
         return issues.save(saved);
+    }
+
+    @Transactional
+    public List<MedicineIssue> issueTakeout(Long escortId, TakeoutMedicineRequest request) {
+        MedicalEscort escort = escorts.getOpenForTakeout(escortId);
+        if (request == null) {
+            throw new BizException("请勾选要外带的药品");
+        }
+        List<TakeoutMedicineRequest.TakeoutItem> rawItems = new ArrayList<>();
+        if (request.items != null && !request.items.isEmpty()) {
+            rawItems.addAll(request.items);
+        } else {
+            TakeoutMedicineRequest.TakeoutItem one = new TakeoutMedicineRequest.TakeoutItem();
+            one.medicineId = request.medicineId;
+            one.qty = request.qty;
+            one.doseTime = request.doseTime;
+            one.operator = request.operator;
+            rawItems.add(one);
+        }
+        if (rawItems.isEmpty()) {
+            throw new BizException("请勾选至少一种外带药品");
+        }
+
+        record PreparedItem(Medicine medicine, int qty, String dose, String operator) {
+        }
+        List<PreparedItem> prepared = new ArrayList<>();
+        Map<Long, Integer> stockNeed = new HashMap<>();
+        Set<String> batchDoses = new HashSet<>();
+        LocalDate date = LocalDate.now();
+        Resident resident = residents.findById(escort.residentId)
+                .orElseThrow(() -> new BizException("老人档案不存在"));
+
+        for (TakeoutMedicineRequest.TakeoutItem item : rawItems) {
+            if (item == null || item.medicineId == null) {
+                throw new BizException("请选择要外带的药品");
+            }
+            if (item.qty == null || item.qty <= 0) {
+                throw new BizException("外带数量要大于 0");
+            }
+            String dose = (item.doseTime == null || item.doseTime.isBlank()) ? "早" : item.doseTime.trim();
+            if (!DOSE.contains(dose)) {
+                throw new BizException("剂次只能是早、中、晚");
+            }
+            String doseKey = item.medicineId + "#" + dose;
+            if (!batchDoses.add(doseKey)) {
+                throw new BizException("同一护送单同一种药的同一剂次只能勾一次外带");
+            }
+            Medicine medicine = medicines.findById(item.medicineId)
+                    .orElseThrow(() -> new BizException("药品不存在"));
+            if (!"在用".equals(medicine.status)) {
+                throw new BizException("药品 " + medicine.name + " 已经停用，不能外带");
+            }
+            if (!issues.findByResidentIdAndMedicineIdAndIssueDateAndDoseTimeAndKind(
+                    resident.id, medicine.id, date, dose, "外带").isEmpty()) {
+                throw new BizException("老人 " + resident.name + " 今天的" + dose + "剂已经勾过 "
+                        + medicine.name + " 外带了");
+            }
+            String operator = (item.operator == null || item.operator.isBlank()) ? request.operator : item.operator;
+            prepared.add(new PreparedItem(medicine, item.qty, dose, operator));
+            stockNeed.merge(medicine.id, item.qty, Integer::sum);
+        }
+
+        // 先把整批库存和重复项都核完，再统一扣库存；任何一项失败整批回滚。
+        Map<Long, Medicine> medicineMap = new HashMap<>();
+        for (PreparedItem item : prepared) {
+            medicineMap.put(item.medicine().id, item.medicine());
+        }
+        for (Map.Entry<Long, Integer> need : stockNeed.entrySet()) {
+            Medicine medicine = medicineMap.get(need.getKey());
+            if (medicine.stock < need.getValue()) {
+                throw new BizException("药品 " + medicine.name + " 库存只剩 " + medicine.stock + " "
+                        + medicine.unit + "，外带不了 " + need.getValue() + " " + medicine.unit);
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        List<MedicineIssue> savedIssues = new ArrayList<>();
+        for (PreparedItem item : prepared) {
+            Medicine medicine = item.medicine();
+            medicine.stock -= item.qty();
+            medicines.save(medicine);
+
+            MedicineIssue saved = new MedicineIssue();
+            saved.residentId = resident.id;
+            saved.medicineId = medicine.id;
+            saved.qty = item.qty();
+            saved.kind = "外带";
+            saved.doseTime = item.dose();
+            saved.issueDate = date;
+            saved.operator = item.operator();
+            saved.escortId = escort.id;
+            saved.createdAt = now;
+            savedIssues.add(issues.save(saved));
+        }
+        return savedIssues;
     }
 }

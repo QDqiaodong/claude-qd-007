@@ -46,4 +46,11 @@ export const medicineIssueApi = {
   create: (data) => http.post('/medicine-issues', data)
 }
 
+export const medicalEscortApi = {
+  list: (params) => http.get('/medical-escorts', { params }),
+  create: (data) => http.post('/medical-escorts', data),
+  close: (id, data) => http.post(`/medical-escorts/${id}/close`, data),
+  addTakeoutMedicines: (id, data) => http.post(`/medical-escorts/${id}/takeout-medicines`, data)
+}
+
 export default http

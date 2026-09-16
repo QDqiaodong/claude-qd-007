@@ -66,7 +66,7 @@ public class RoomService {
         if (input.kind != null && !input.kind.isBlank()) {
             r.kind = input.kind;
         }
-        long living = residents.countByRoomIdAndStatus(r.id, "在住");
+        long living = residents.countByRoomIdAndStatusIn(r.id, List.of("在住", "请假外出"));
         if (input.capacity != null && input.capacity > 0 && !input.capacity.equals(r.capacity)) {
             if (input.capacity < living) {
                 throw new BizException("房间 " + r.name + " 现在住着 " + living + " 位老人，"
@@ -133,14 +133,14 @@ public class RoomService {
             if (!"在用".equals(target.status)) {
                 throw new BizException("房间 " + target.name + " 现在是" + target.status + "，床位挪不进去");
             }
-            if (!residents.findByBedIdAndStatusIn(b.id, List.of("在住")).isEmpty()) {
+            if (!residents.findByBedIdAndStatusIn(b.id, List.of("在住", "请假外出")).isEmpty()) {
                 throw new BizException("床位 " + b.code + " 上还住着老人，先转床再挪房间");
             }
             b.roomId = target.id;
         }
         if (input.status != null && !input.status.isBlank() && !input.status.equals(b.status)) {
             if (!"空闲".equals(input.status)
-                    && !residents.findByBedIdAndStatusIn(b.id, List.of("在住")).isEmpty()) {
+                    && !residents.findByBedIdAndStatusIn(b.id, List.of("在住", "请假外出")).isEmpty()) {
                 throw new BizException("床位 " + b.code + " 上还住着老人，不能改成" + input.status);
             }
             b.status = input.status;

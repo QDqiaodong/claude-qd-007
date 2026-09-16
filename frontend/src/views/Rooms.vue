@@ -155,10 +155,10 @@ const bedForm = reactive({ id: null, code: '', roomId: null, position: '中间',
 
 const roomName = (id) => rooms.value.find((r) => r.id === id)?.name || '未归房'
 const living = (roomId) =>
-  residents.value.filter((r) => r.roomId === roomId && r.status === '在住').length
+  residents.value.filter((r) => r.roomId === roomId && ['在住', '请假外出'].includes(r.status)).length
 const holder = (bedId) => {
-  const r = residents.value.find((x) => x.bedId === bedId && x.status === '在住')
-  return r ? `${r.name}（${r.careLevel}）` : '—'
+  const r = residents.value.find((x) => x.bedId === bedId && ['在住', '请假外出'].includes(x.status))
+  return r ? `${r.name}（${r.careLevel}${r.status === '请假外出' ? ' · 外出' : ''}）` : '—'
 }
 
 const loadRooms = async () => {

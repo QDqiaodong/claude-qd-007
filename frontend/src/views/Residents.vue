@@ -43,9 +43,21 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="170">
+      <el-table-column label="就医护送" width="170">
+        <template #default="{ row }">
+          <template v-if="activeEscort(row.id)">
+            <el-tag size="small" :type="activeEscort(row.id).status === '滞留' ? 'danger' : 'warning'">
+              {{ activeEscort(row.id).status }}
+            </el-tag>
+            <div style="font-size:12px;color:#909399">{{ activeEscort(row.id).hospitalName }}</div>
+          </template>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="240">
         <template #default="{ row }">
           <el-button link type="primary" @click="openForm(row)">转床</el-button>
+          <el-button v-if="row.status === '在住'" link type="warning" @click="goEscort(row)">外出就医</el-button>
           <el-button
             v-if="row.status !== '已退住'"
             link
@@ -106,12 +118,16 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { bedApi, residentApi, roomApi } from '../api'
+import { bedApi, medicalEscortApi, residentApi, roomApi } from '../api'
+
+const router = useRouter()
 
 const rows = ref([])
 const rooms = ref([])
 const beds = ref([])
+const escorts = ref([])
 const loading = ref(false)
 const query = reactive({ status: '', careLevel: '', keyword: '' })
 
@@ -128,7 +144,12 @@ const freeBeds = computed(() =>
 
 const roomName = (id) => (id ? rooms.value.find((r) => r.id === id)?.name || `#${id}` : '—')
 const bedName = (id) => (id ? beds.value.find((b) => b.id === id)?.code || `#${id}` : '—')
-const living = (roomId) => rows.value.filter((r) => r.roomId === roomId && r.status === '在住').length
+const living = (roomId) => rows.value.filter((r) => r.roomId === roomId && ['在住', '请假外出'].includes(r.status)).length
+const activeEscort = (residentId) =>
+  escorts.value.find((e) => e.residentId === residentId && e.status !== '已销单')
+const goEscort = (row) => {
+  router.push({ path: '/medical-escorts', query: { residentId: row.id } })
+}
 
 const load = async () => {
   loading.value = true
@@ -203,7 +224,9 @@ const checkOut = async (row) => {
 
 onMounted(async () => {
   try {
-    await reloadWarehouse()
+    await Promise.all([reloadWarehouse(), medicalEscortApi.list({}).then((data) => {
+      escorts.value = data
+    })])
   } catch (e) {
     ElMessage.error(e.message)
   }
