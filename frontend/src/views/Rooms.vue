@@ -24,6 +24,14 @@
         <el-table-column label="床位数" width="90">
           <template #default="{ row }">{{ beds.filter(b => b.roomId === row.id).length }} 张</template>
         </el-table-column>
+        <el-table-column label="未结束班次" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="openShiftCount(row.id) > 0" type="warning">
+              {{ openShiftCount(row.id) }} 条
+            </el-tag>
+            <span v-else style="color:#67c23a">无</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === '在用' ? 'success' : row.status === '维修' ? 'warning' : 'info'">
@@ -93,11 +101,62 @@
         </el-form-item>
         <el-form-item label="可住人数"><el-input-number v-model="roomForm.capacity" :min="1" /></el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="roomForm.status" style="width:100%">
-            <el-option label="在用" value="在用" />
-            <el-option label="停用" value="停用" />
-            <el-option label="维修" value="维修" />
+          <el-select
+            v-model="roomForm.status"
+            style="width:100%"
+            :disabled="!!roomForm.id && roomForm.status !== '在用' && hasOpenShiftsForCurrentRoom"
+          >
+            <el-option
+              v-for="option in roomStatusOptions(roomForm)"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+              :disabled="option.disabled && option.value !== roomForm.status"
+            />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="roomForm.id && roomForm.status !== '在用'" label="班次处理">
+          <div style="width:100%">
+            <el-alert
+              v-if="currentRoomOpenShifts.length === 0"
+              type="success"
+              :closable="false"
+              show-icon
+              title="这间房已无待接班或值班中班次，可以保存。"
+            />
+            <el-table v-else :data="currentRoomOpenShifts" size="small" border style="margin-top:8px">
+              <el-alert
+                v-if="roomForm.status !== '在用'"
+                type="warning"
+                :closable="false"
+                show-icon
+                style="margin-bottom:8px"
+                title="维修/停用态不能交班；请先把房间恢复为在用，或先在班次页取消待接班。"
+              />
+              <el-table-column prop="shiftNo" label="班次号" width="95" />
+              <el-table-column prop="period" label="班次" width="70" />
+              <el-table-column prop="nurse" label="护理员" width="90" />
+              <el-table-column label="处理" width="80">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === '值班中' ? 'warning' : 'info'">
+                    {{ row.status === '值班中' ? '交班' : '取消' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="hasActiveOpenShift" label="注意事项" min-width="180">
+                <template #default="{ row }">
+                  <el-input
+                    v-if="row.status === '值班中'"
+                    v-model="closeShiftNotes[row.id]"
+                    type="textarea"
+                    :rows="2"
+                    :placeholder="`${row.nurse} 交班要写清老人情况`"
+                  />
+                  <span v-else style="color:#909399">待接班将取消</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -138,13 +197,14 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { bedApi, residentApi, roomApi } from '../api'
+import { bedApi, residentApi, roomApi, shiftApi } from '../api'
 
 const rooms = ref([])
 const beds = ref([])
 const residents = ref([])
+const shifts = ref([])
 const loading = ref(false)
 const query = reactive({ roomId: null, status: '' })
 
@@ -152,10 +212,38 @@ const roomVisible = ref(false)
 const roomForm = reactive({ id: null, code: '', name: '', floor: 1, kind: '双人间', capacity: 2, status: '在用' })
 const bedVisible = ref(false)
 const bedForm = reactive({ id: null, code: '', roomId: null, position: '中间', status: '空闲' })
+const closeShiftNotes = reactive({})
+
+const currentRoomOpenShifts = computed(() =>
+  shifts.value
+    .filter((s) => s.roomId === roomForm.id && ['待接班', '值班中'].includes(s.status))
+    .sort((a, b) => a.id - b.id)
+)
+const hasActiveOpenShift = computed(() => currentRoomOpenShifts.value.some((s) => s.status === '值班中'))
+const hasOpenShiftsForCurrentRoom = computed(() => currentRoomOpenShifts.value.length > 0)
 
 const roomName = (id) => rooms.value.find((r) => r.id === id)?.name || '未归房'
 const living = (roomId) =>
   residents.value.filter((r) => r.roomId === roomId && ['在住', '请假外出'].includes(r.status)).length
+const openShiftCount = (roomId) =>
+  shifts.value.filter((s) => s.roomId === roomId && ['待接班', '值班中'].includes(s.status)).length
+const canCloseRoom = (room) => room.status === '在用' && living(room.id) === 0 && openShiftCount(room.id) === 0
+const roomStatusOptions = (room) => {
+  const otherClosedStatusAllowed = room.status !== '在用' || canCloseRoom(room)
+  return [
+    { label: '在用', value: '在用', disabled: false },
+    {
+      label: otherClosedStatusAllowed ? '停用' : '停用（先清空在住老人和未结束班次）',
+      value: '停用',
+      disabled: !otherClosedStatusAllowed
+    },
+    {
+      label: otherClosedStatusAllowed ? '维修' : '维修（先清空在住老人和未结束班次）',
+      value: '维修',
+      disabled: !otherClosedStatusAllowed
+    }
+  ]
+}
 const holder = (bedId) => {
   const r = residents.value.find((x) => x.bedId === bedId && ['在住', '请假外出'].includes(x.status))
   return r ? `${r.name}（${r.careLevel}${r.status === '请假外出' ? ' · 外出' : ''}）` : '—'
@@ -180,8 +268,12 @@ const loadBeds = async () => {
 }
 
 const openRoom = (row) => {
+  Object.keys(closeShiftNotes).forEach((key) => delete closeShiftNotes[key])
   if (row) {
     Object.assign(roomForm, row)
+    shifts.value
+      .filter((s) => s.roomId === row.id && s.status === '值班中')
+      .forEach((s) => { closeShiftNotes[s.id] = s.handoverNote || '' })
   } else {
     Object.assign(roomForm, { id: null, code: '', name: '', floor: 1, kind: '双人间', capacity: 2, status: '在用' })
   }
@@ -191,19 +283,39 @@ const openRoom = (row) => {
 const submitRoom = async () => {
   try {
     if (roomForm.id) {
-      await roomApi.update(roomForm.id, {
+      const basePayload = {
         name: roomForm.name,
         floor: roomForm.floor,
         kind: roomForm.kind,
-        capacity: roomForm.capacity,
-        status: roomForm.status
-      })
+        capacity: roomForm.capacity
+      }
+      if (roomForm.status !== '在用') {
+        const missingNote = currentRoomOpenShifts.value
+          .some((s) => s.status === '值班中' && !closeShiftNotes[s.id]?.trim())
+        if (missingNote) {
+          throw new Error('值班中的班次必须先写交班注意事项，待接班才会随本次保存取消')
+        }
+        await roomApi.close(roomForm.id, {
+          targetStatus: roomForm.status,
+          shiftActions: currentRoomOpenShifts.value.map((s) => ({
+            shiftId: s.id,
+            action: s.status === '值班中' ? 'handover' : 'cancel',
+            handoverNote: closeShiftNotes[s.id] || ''
+          }))
+        })
+      } else {
+        await roomApi.update(roomForm.id, { ...basePayload, status: roomForm.status })
+      }
     } else {
       await roomApi.create({ ...roomForm })
     }
     ElMessage.success('已保存')
     roomVisible.value = false
-    await loadRooms()
+    await Promise.all([
+      loadRooms(),
+      residentApi.list({}).then((data) => { residents.value = data }),
+      shiftApi.list({}).then((data) => { shifts.value = data })
+    ])
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -239,9 +351,14 @@ const submitBed = async () => {
 
 onMounted(async () => {
   try {
-    const [r, s] = await Promise.all([roomApi.list({}), residentApi.list({})])
+    const [r, s, openShifts] = await Promise.all([
+      roomApi.list({}),
+      residentApi.list({}),
+      shiftApi.list({})
+    ])
     rooms.value = r
     residents.value = s
+    shifts.value = openShifts
   } catch (e) {
     ElMessage.error(e.message)
   }

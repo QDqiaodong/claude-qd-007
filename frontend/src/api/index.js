@@ -13,7 +13,8 @@ http.interceptors.response.use(
 export const roomApi = {
   list: (params) => http.get('/rooms', { params }),
   create: (data) => http.post('/rooms', data),
-  update: (id, data) => http.put(`/rooms/${id}`, data)
+  update: (id, data) => http.put(`/rooms/${id}`, data),
+  close: (id, data) => http.post(`/rooms/${id}/close`, data)
 }
 
 export const bedApi = {

@@ -14,8 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CareShiftService {
 
-    /** 还占着房间与护理员的状态 */
-    private static final List<String> OPEN = List.of("待接班", "值班中");
+    /** 待接班和值班中仍占着房间与护理员；已交班、已取消都释放占用。 */
+    public static final List<String> OPEN = List.of("待接班", "值班中");
 
     private final CareShiftRepository shifts;
     private final RoomRepository rooms;
@@ -64,20 +64,21 @@ public class CareShiftService {
         if (input.startMin == null || input.endMin == null || input.endMin <= input.startMin) {
             throw new BizException("结束时间必须晚于开始时间");
         }
-        Room room = rooms.findById(input.roomId).orElseThrow(() -> new BizException("房间不存在"));
+        Room room = rooms.findByIdForUpdate(input.roomId)
+                .orElseThrow(() -> new BizException("房间不存在"));
         if (!"在用".equals(room.status)) {
             throw new BizException("房间 " + room.name + " 现在是" + room.status + "，不排班次");
         }
         String nurse = input.nurse.trim();
-        for (CareShift other : shifts.findByRoomIdAndShiftDateAndStatusNotIn(
-                room.id, input.shiftDate, List.of("已取消"))) {
+        for (CareShift other : shifts.findByRoomIdAndShiftDateAndStatusIn(
+                room.id, input.shiftDate, OPEN)) {
             if (overlap(other, input)) {
                 throw new BizException("房间 " + room.name + " 这个时段已经排了班次 "
                         + other.shiftNo);
             }
         }
-        for (CareShift other : shifts.findByNurseAndShiftDateAndStatusNotIn(
-                nurse, input.shiftDate, List.of("已取消"))) {
+        for (CareShift other : shifts.findByNurseAndShiftDateAndStatusIn(
+                nurse, input.shiftDate, OPEN)) {
             if (overlap(other, input)) {
                 throw new BizException("护理员 " + nurse + " 这个时段已经排了班次 "
                         + other.shiftNo + "，一个人不能同时守两间房");
@@ -100,22 +101,34 @@ public class CareShiftService {
 
     @Transactional
     public CareShift advance(Long id, String action, String handoverNote) {
-        CareShift s = shifts.findById(id).orElseThrow(() -> new BizException("班次不存在"));
+        // 先查房间号，再按“房间行 → 班次行”的全局顺序加锁，和房间维修/停用互斥。
+        CareShift shift = shifts.findById(id).orElseThrow(() -> new BizException("班次不存在"));
+        Room room = rooms.findByIdForUpdate(shift.roomId)
+                .orElseThrow(() -> new BizException("班次对应的房间不存在"));
+        CareShift s = shifts.findByIdForUpdate(id).orElseThrow(() -> new BizException("班次不存在"));
+
         if ("start".equals(action)) {
             if (!"待接班".equals(s.status)) {
                 throw new BizException("只有待接班的班次能接班，这条现在是 " + s.status);
+            }
+            if (!"在用".equals(room.status)) {
+                throw new BizException("房间 " + room.name + " 现在是" + room.status
+                        + "，班次不能接班");
             }
             s.status = "值班中";
         } else if ("handover".equals(action)) {
             if (!"值班中".equals(s.status)) {
                 throw new BizException("只有值班中的班次能交班，这条现在是 " + s.status);
             }
-            if (handoverNote != null && !handoverNote.isBlank()) {
-                s.handoverNote = handoverNote;
+            if (!"在用".equals(room.status)) {
+                throw new BizException("房间 " + room.name + " 现在是" + room.status
+                        + "，不能在维修或停用态交班；先把房间恢复在用或取消班次");
             }
-            if (s.handoverNote == null || s.handoverNote.isBlank()) {
+            String note = handoverNote == null ? s.handoverNote : handoverNote.trim();
+            if (note == null || note.isBlank()) {
                 throw new BizException("交班要写下注意事项，接班的才知道老人情况");
             }
+            s.handoverNote = note;
             s.status = "已交班";
         } else if ("cancel".equals(action)) {
             if (!OPEN.contains(s.status)) {

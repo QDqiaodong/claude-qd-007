@@ -32,8 +32,18 @@
       </el-table-column>
       <el-table-column label="操作" width="190">
         <template #default="{ row }">
-          <el-button v-if="row.status === '待接班'" link type="primary" @click="advance(row, 'start')">接班</el-button>
-          <el-button v-if="row.status === '值班中'" link type="success" @click="openHandover(row)">交班</el-button>
+          <el-button
+            v-if="row.status === '待接班' && roomInUse(row.roomId)"
+            link
+            type="primary"
+            @click="advance(row, 'start')"
+          >接班</el-button>
+          <el-button
+            v-if="row.status === '值班中' && roomInUse(row.roomId)"
+            link
+            type="success"
+            @click="openHandover(row)"
+          >交班</el-button>
           <el-button
             v-if="row.status === '待接班' || row.status === '值班中'"
             link
@@ -117,8 +127,13 @@ const usableRooms = computed(() => rooms.value.filter((r) => r.status === '在�
 const hm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
 const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
 const roomName = (id) => (id ? rooms.value.find((r) => r.id === id)?.name || `#${id}` : '未选')
+const roomInUse = (roomId) => rooms.value.find((r) => r.id === roomId)?.status === '在用'
 const tagType = (s) =>
   s === '已交班' ? 'success' : s === '值班中' ? 'warning' : s === '已取消' ? 'info' : ''
+
+const loadRooms = async () => {
+  rooms.value = await roomApi.list({})
+}
 
 const load = async () => {
   loading.value = true
@@ -134,6 +149,8 @@ const load = async () => {
     loading.value = false
   }
 }
+
+const refresh = () => Promise.all([loadRooms(), load()])
 
 const openShift = () => {
   Object.assign(form, {
@@ -160,7 +177,7 @@ const submit = async () => {
     })
     ElMessage.success('排上了')
     visible.value = false
-    await load()
+    await refresh()
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -170,7 +187,7 @@ const advance = async (row, action) => {
   try {
     await shiftApi.advance(row.id, action, null)
     ElMessage.success('已更新')
-    await load()
+    await refresh()
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -187,7 +204,7 @@ const submitHandover = async () => {
     await shiftApi.advance(handoverId.value, 'handover', handoverNote.value)
     ElMessage.success('已交班')
     handoverVisible.value = false
-    await load()
+    await refresh()
   } catch (e) {
     ElMessage.error(e.message)
   }

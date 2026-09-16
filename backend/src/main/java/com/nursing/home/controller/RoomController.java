@@ -3,6 +3,7 @@ package com.nursing.home.controller;
 import com.nursing.home.entity.Bed;
 import com.nursing.home.entity.Room;
 import com.nursing.home.service.RoomService;
+import com.nursing.home.service.RoomService.CareShiftAction;
 import java.util.List;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,6 +31,14 @@ public class RoomController {
     @PutMapping("/rooms/{id}")
     public Room updateRoom(@PathVariable Long id, @RequestBody Room input) {
         return service.updateRoom(id, input);
+    }
+
+    @PostMapping("/rooms/{id}/close")
+    public Room closeRoom(@PathVariable Long id, @RequestBody CloseRoomRequest input) {
+        return service.closeRoom(id, input.targetStatus(), input.shiftActions());
+    }
+
+    public record CloseRoomRequest(String targetStatus, List<CareShiftAction> shiftActions) {
     }
 
     @GetMapping("/beds")

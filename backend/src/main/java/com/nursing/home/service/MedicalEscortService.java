@@ -23,7 +23,6 @@ public class MedicalEscortService {
     public static final String CLOSED = "已销单";
     public static final List<String> OPEN_STATUSES = List.of(ACTIVE, OVERDUE);
     private static final List<String> NEED_NURSE_CARE_LEVELS = List.of("半自理", "不能自理");
-    private static final List<String> PAST_SHIFT_STATUSES = List.of("已交班", "已取消");
 
     private final MedicalEscortRepository escorts;
     private final ResidentRepository residents;
@@ -97,9 +96,8 @@ public class MedicalEscortService {
 
     private CareShift currentDutyShift(Long roomId) {
         LocalDate today = LocalDateTime.now().toLocalDate();
-        return shifts.findByRoomIdAndShiftDateAndStatusNotIn(roomId, today, PAST_SHIFT_STATUSES)
+        return shifts.findByRoomIdAndShiftDateAndStatusIn(roomId, today, List.of("值班中"))
                 .stream()
-                .filter(s -> "值班中".equals(s.status))
                 .findFirst()
                 .orElse(null);
     }
